@@ -144,6 +144,7 @@ If you change the structure of the XML, update the classes in `Catalog.cs` to ma
 | Problem | Fix |
 |---------|-----|
 | Page says **"No files available."** | The shared folder is empty. Check the `Sharing files from ...` line the server prints, and put files in that folder. |
+| `localhost` doesn't load, or IPv6 addresses don't work (macOS/Linux) | On macOS and Linux the server only listens on IPv4. Browsers normally fall back to IPv4 automatically; if one doesn't, use `http://127.0.0.1:8080`. On Windows, IPv6 works. |
 | **403 Forbidden** on port 5000 | On macOS, AirPlay Receiver uses port 5000. Use a different port. |
 | Client says **"Could not reach ..."** | The server isn't running, or the address or port is wrong. |
 | Server says **"Not allowed to listen on all addresses"** (Windows) | Other computers can't connect yet. Run the `netsh` command it prints once as administrator, or run the server as administrator. |
