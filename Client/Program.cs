@@ -6,6 +6,7 @@
 // With no file names, every file on the server is downloaded.
 
 using System.Globalization;
+using System.Net.Http;
 using System.Net.Http.Json;
 using System.Xml;
 using System.Xml.Serialization;
@@ -73,11 +74,12 @@ foreach (var f in files)
         response.EnsureSuccessStatusCode();
 
         // Stream to a temporary file so a failed download never leaves a half-written file behind.
-        await using (var source = await response.Content.ReadAsStreamAsync())
-        await using (var target = File.Create(partial))
+        using (var source = await response.Content.ReadAsStreamAsync())
+        using (var target = File.Create(partial))
             await source.CopyToAsync(target);
 
-        File.Move(partial, destination, overwrite: true);
+        File.Delete(destination);
+        File.Move(partial, destination);
         downloaded.Add(destination);
         Console.WriteLine($"  OK    {f.Name}");
     }
@@ -120,4 +122,9 @@ foreach (var path in downloaded.Where(p => p.EndsWith(".xml", StringComparison.O
 
 return failed == 0 ? 0 : 1;
 
-record RemoteFile(string Name, long Size, DateTime Modified);
+class RemoteFile
+{
+    public string Name { get; set; } = "";
+    public long Size { get; set; }
+    public DateTime Modified { get; set; }
+}

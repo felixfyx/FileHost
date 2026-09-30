@@ -7,7 +7,9 @@ A small C# file server and demo client. The server shares a folder over HTTP, an
 
 ## Requirements
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download) or newer
+- [.NET 8 SDK](https://dotnet.microsoft.com/download) or newer to build.
+- **Server:** runs on .NET 8 (Windows, macOS or Linux).
+- **Client:** runs on .NET 8 **or .NET Framework 4.8**. See [Running the client on .NET Framework 4.8](#running-the-client-on-net-framework-48).
 
 ## Quickstart
 
@@ -28,7 +30,7 @@ A small C# file server and demo client. The server shares a folder over HTTP, an
 3. **Run the client** in a second terminal:
 
    ```bash
-   dotnet run --project Client
+   dotnet run --project Client -f net8.0
    ```
 
    It downloads every file into `./Downloads` and prints the contents of `dummy.xml`:
@@ -67,7 +69,7 @@ dotnet run --project Server -- --FilesPath ~/Desktop/ToShare --Port 9000
 ## Client options
 
 ```bash
-dotnet run --project Client -- [--server http://host:port] [--output folder] [file names...]
+dotnet run --project Client -f net8.0 -- [--server http://host:port] [--output folder] [file names...]
 ```
 
 | Option     | Default                 | Meaning |
@@ -80,13 +82,40 @@ Examples:
 
 ```bash
 # Download everything from another machine on the network
-dotnet run --project Client -- --server http://192.168.1.20:8080
+dotnet run --project Client -f net8.0 -- --server http://192.168.1.20:8080
 
 # Download only dummy.xml into a folder on the Desktop
-dotnet run --project Client -- --output ~/Desktop/files dummy.xml
+dotnet run --project Client -f net8.0 -- --output ~/Desktop/files dummy.xml
 ```
 
 The client exits with code `1` if a download fails, a requested file isn't on the server, an XML file can't be read, or the server can't be reached.
+
+## Running the client on .NET Framework 4.8
+
+The client is built for both .NET 8 and .NET Framework 4.8. `dotnet build` produces both:
+
+```
+Client/bin/Debug/net8.0/Client.dll
+Client/bin/Debug/net48/Client.exe
+```
+
+On a Windows machine with .NET Framework 4.8, copy the whole `Client/bin/Debug/net48` folder over and run:
+
+```bat
+Client.exe --server http://192.168.1.20:8080
+```
+
+On macOS or Linux, you can run the 4.8 build with [Mono](https://www.mono-project.com/): `mono Client.exe --server ...`.
+
+When running from source, `dotnet run` needs to know which version to use:
+
+```bash
+dotnet run --project Client -f net8.0 -- --server http://localhost:8080
+```
+
+To use the client code inside your own .NET Framework 4.8 project, copy `Program.cs` and `Catalog.cs`, and add a reference to `System.Net.Http` and the [`System.Net.Http.Json`](https://www.nuget.org/packages/System.Net.Http.Json) NuGet package.
+
+The server needs .NET 8 because it's built on ASP.NET Core, which doesn't run on .NET Framework. A 4.8 client can still download from it, since they only talk over HTTP.
 
 ## Downloading from other computers
 
