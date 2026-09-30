@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Catalog name="Demo Store" updated="2026-09-30T12:00:00Z">
+  <Product id="1001" category="Hardware">
+    <Name>Wireless Mouse</Name>
+    <Price currency="USD">24.99</Price>
+    <Quantity>150</Quantity>
+    <InStock>true</InStock>
+    <Tags>
+      <Tag>peripheral</Tag>
+      <Tag>bluetooth</Tag>
+    </Tags>
+  </Product>
+  <Product id="1002" category="Hardware">
+    <Name>Mechanical Keyboard</Name>
+    <Price currency="USD">89.50</Price>
+    <Quantity>42</Quantity>
+    <InStock>true</InStock>
+    <Tags>
+      <Tag>peripheral</Tag>
+      <Tag>rgb</Tag>
+    </Tags>
+  </Product>
+  <Product id="2001" category="Software">
+    <Name>Photo Editor Pro</Name>
+    <Price currency="USD">49.00</Price>
+    <Quantity>0</Quantity>
+    <InStock>false</InStock>
+    <Tags>
+      <Tag>license</Tag>
+    </Tags>
+  </Product>
+</Catalog>
