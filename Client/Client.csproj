@@ -2,17 +2,12 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- Builds for both modern .NET and .NET Framework 4.8. -->
-    <TargetFrameworks>net8.0;net48</TargetFrameworks>
-    <LangVersion>latest</LangVersion>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>7.3</LangVersion>
   </PropertyGroup>
 
-  <!-- .NET Framework doesn't include these, so bring them in. -->
-  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
-    <Reference Include="System.Net.Http" />
-    <PackageReference Include="System.Net.Http.Json" Version="8.0.1" />
+  <ItemGroup>
+    <Reference Include="System.Configuration" />
   </ItemGroup>
 
 </Project>

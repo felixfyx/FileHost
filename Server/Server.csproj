@@ -2,25 +2,17 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- Builds for both modern .NET and .NET Framework 4.8. -->
-    <TargetFrameworks>net8.0;net48</TargetFrameworks>
-    <LangVersion>latest</LangVersion>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <!-- `dotnet run` starts in this folder, so it uses Server/appsettings.json and Server/SharedFiles. -->
-    <RunWorkingDirectory>$(MSBuildProjectDirectory)</RunWorkingDirectory>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>7.3</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Reads appsettings.json and setting overrides from the command line. -->
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.2" />
+    <Reference Include="System.Configuration" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Ship the settings next to the program so a copied bin folder runs on its own. -->
-    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The file being served is copied next to Server.exe. -->
+    <None Update="dummy.xml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

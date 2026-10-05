@@ -55,10 +55,3 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
-
-# Files being hosted (except the sample file)
-**/SharedFiles/*
-!**/SharedFiles/dummy.xml
-
-# Client default download folder
-Downloads/
