@@ -1,19 +1,25 @@
-// Demo client for FileHost: lists the files on the server and downloads them.
+// Demo client for FileHost: downloads files from the server.
 //
 // Usage:
-//   dotnet run -- [--server http://host:port] [--output folder] [file names...]
+//   dotnet run -- [--server http://host:port] [--output folder] [--timeout seconds] [file names...]
 //
-// With no file names, every file on the server is downloaded.
+// With file names, only those files are downloaded, straight from the server.
+// With no file names, the client asks the server for its file list and downloads everything.
 
 using System.Globalization;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Xml;
 using System.Xml.Serialization;
 
 var server = "http://localhost:8080";
 var outputPath = "Downloads";
+var timeoutSeconds = 30;
 var wanted = new List<string>();
+const string usage =
+    "Usage: dotnet run -- [--server http://host:port] [--output folder] [--timeout seconds] [file names...]";
 
 for (var i = 0; i < args.Length; i++)
 {
@@ -21,8 +27,15 @@ for (var i = 0; i < args.Length; i++)
     {
         case "--server" when i + 1 < args.Length: server = args[++i]; break;
         case "--output" when i + 1 < args.Length: outputPath = args[++i]; break;
+        case "--timeout" when i + 1 < args.Length:
+            if (!int.TryParse(args[++i], out timeoutSeconds) || timeoutSeconds <= 0)
+            {
+                Console.Error.WriteLine("--timeout must be a whole number of seconds greater than 0.");
+                return 1;
+            }
+            break;
         case "--help" or "-h":
-            Console.WriteLine("Usage: dotnet run -- [--server http://host:port] [--output folder] [file names...]");
+            Console.WriteLine(usage);
             return 0;
         default: wanted.Add(args[i]); break;
     }
@@ -31,64 +44,43 @@ for (var i = 0; i < args.Length; i++)
 outputPath = Path.GetFullPath(outputPath);
 Directory.CreateDirectory(outputPath);
 
-using var http = new HttpClient { BaseAddress = new Uri(server) };
+// How long to wait for the server to respond, and how long a download may go without receiving
+// any data. A slow download that keeps making progress is never cut off.
+var timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
-// 1. Ask the server what files it has.
-List<RemoteFile> files;
-try
-{
-    files = await http.GetFromJsonAsync<List<RemoteFile>>("/api/files") ?? [];
-}
-catch (HttpRequestException ex)
-{
-    Console.Error.WriteLine($"Could not reach {server}: {ex.Message}");
-    return 1;
-}
+// Timeouts are handled per request below, so turn off HttpClient's own 100-second limit.
+using var http = new HttpClient { BaseAddress = new Uri(server), Timeout = System.Threading.Timeout.InfiniteTimeSpan };
 
-Console.WriteLine($"{files.Count} file(s) on {server}:");
-foreach (var f in files)
-    Console.WriteLine($"  {f.Name,-40} {f.Size,12:N0} bytes");
-
+// 1. Work out which files to download.
 var failed = 0;
+List<string> names;
 if (wanted.Count > 0)
 {
-    foreach (var missing in wanted.Where(w => !files.Any(f => f.Name == w)))
-    {
-        Console.Error.WriteLine($"Not on server: {missing}");
-        failed++;
-    }
-    files = files.Where(f => wanted.Contains(f.Name)).ToList();
+    // Specific files requested: no need for the full list, just ask for each file directly.
+    names = wanted;
+}
+else
+{
+    var files = await FetchFileListAsync();
+    if (files is null)
+        return 1;
+
+    Console.WriteLine($"{files.Count} file(s) on {server}:");
+    foreach (var f in files)
+        Console.WriteLine($"  {f.Name,-40} {f.Size,12:N0} bytes");
+    names = files.Select(f => f.Name).ToList();
 }
 
 // 2. Download each file into the output folder.
-Console.WriteLine($"\nDownloading {files.Count} file(s) to {outputPath}");
+Console.WriteLine($"\nDownloading {names.Count} file(s) from {server} to {outputPath}");
 var downloaded = new List<string>();
-foreach (var f in files)
+foreach (var name in names)
 {
-    var destination = Path.Combine(outputPath, Path.GetFileName(f.Name));
-    var partial = destination + ".part";
-    try
-    {
-        using var response = await http.GetAsync(
-            "/download/" + Uri.EscapeDataString(f.Name), HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
-
-        // Stream to a temporary file so a failed download never leaves a half-written file behind.
-        using (var source = await response.Content.ReadAsStreamAsync())
-        using (var target = File.Create(partial))
-            await source.CopyToAsync(target);
-
-        File.Delete(destination);
-        File.Move(partial, destination);
-        downloaded.Add(destination);
-        Console.WriteLine($"  OK    {f.Name}");
-    }
-    catch (Exception ex) when (ex is HttpRequestException or IOException)
-    {
-        File.Delete(partial);
-        Console.Error.WriteLine($"  FAIL  {f.Name}: {ex.Message}");
+    var path = await DownloadAsync(name);
+    if (path is null)
         failed++;
-    }
+    else
+        downloaded.Add(path);
 }
 
 // 3. Turn any downloaded catalog XML files into C# objects (see Catalog.cs).
@@ -121,6 +113,83 @@ foreach (var path in downloaded.Where(p => p.EndsWith(".xml", StringComparison.O
 }
 
 return failed == 0 ? 0 : 1;
+
+// Asks the server for its file list. Returns null (after printing why) if that fails.
+async Task<List<RemoteFile>?> FetchFileListAsync()
+{
+    using var cts = new CancellationTokenSource(timeout);
+    try
+    {
+        return await http.GetFromJsonAsync<List<RemoteFile>>("/api/files", cts.Token) ?? [];
+    }
+    catch (OperationCanceledException) when (cts.IsCancellationRequested)
+    {
+        Console.Error.WriteLine($"Timed out after {timeoutSeconds}s waiting for the file list from {server}.");
+    }
+    catch (HttpRequestException ex)
+    {
+        Console.Error.WriteLine($"Could not reach {server}: {ex.Message}");
+    }
+    catch (JsonException ex)
+    {
+        Console.Error.WriteLine($"{server} sent a file list that isn't valid JSON: {ex.Message}");
+    }
+    return null;
+}
+
+// Downloads one file into the output folder. Returns its path, or null (after printing why) if it failed.
+async Task<string?> DownloadAsync(string name)
+{
+    var destination = Path.Combine(outputPath, Path.GetFileName(name));
+    var partial = destination + ".part";
+
+    // Cancels if the server doesn't respond within the timeout, or later goes quiet for that long.
+    using var stalled = new CancellationTokenSource(timeout);
+    try
+    {
+        using var response = await http.GetAsync(
+            "/download/" + Uri.EscapeDataString(name), HttpCompletionOption.ResponseHeadersRead, stalled.Token);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            Console.Error.WriteLine($"  MISSING  {name}: not on server");
+            return null;
+        }
+        response.EnsureSuccessStatusCode();
+
+        // On .NET Framework a read that is already waiting ignores the token, so also close the
+        // response on timeout; that makes the stuck read fail straight away.
+        using var closeOnStall = stalled.Token.Register(response.Dispose);
+
+        // Stream to a temporary file so a failed download never leaves a half-written file behind.
+        using (var source = await response.Content.ReadAsStreamAsync())
+        using (var target = File.Create(partial))
+        {
+            var buffer = new byte[81920];
+            int read;
+            stalled.CancelAfter(timeout);
+            while ((read = await source.ReadAsync(buffer, 0, buffer.Length, stalled.Token)) > 0)
+            {
+                await target.WriteAsync(buffer, 0, read);
+                stalled.CancelAfter(timeout); // Data arrived, so restart the countdown.
+            }
+        }
+
+        File.Delete(destination);
+        File.Move(partial, destination);
+        Console.WriteLine($"  OK       {name}");
+        return destination;
+    }
+    catch (Exception) when (stalled.IsCancellationRequested)
+    {
+        Console.Error.WriteLine($"  TIMEOUT  {name}: no data from the server for {timeoutSeconds}s");
+    }
+    catch (Exception ex) when (ex is HttpRequestException or IOException)
+    {
+        Console.Error.WriteLine($"  FAIL     {name}: {ex.Message}");
+    }
+    File.Delete(partial);
+    return null;
+}
 
 class RemoteFile
 {

@@ -70,14 +70,28 @@ dotnet run --project Server -f net8.0 -- --FilesPath ~/Desktop/ToShare --Port 90
 ## Client options
 
 ```bash
-dotnet run --project Client -f net8.0 -- [--server http://host:port] [--output folder] [file names...]
+dotnet run --project Client -f net8.0 -- [--server http://host:port] [--output folder] [--timeout seconds] [file names...]
 ```
 
-| Option     | Default                 | Meaning |
-|------------|-------------------------|---------|
-| `--server` | `http://localhost:8080` | Address of the server. |
-| `--output` | `Downloads`             | Folder to save files into (created if missing). |
-| file names | all files               | Download only these files. |
+| Option      | Default                 | Meaning |
+|-------------|-------------------------|---------|
+| `--server`  | `http://localhost:8080` | Address of the server. |
+| `--output`  | `Downloads`             | Folder to save files into (created if missing). |
+| `--timeout` | `30`                    | Seconds to wait for the server to respond, and the longest a download may go without receiving any data. A slow download that keeps making progress is never cut off. |
+| file names  | all files               | Download only these files. |
+
+**With file names**, the client requests each file directly and doesn't fetch the server's file list. A file that isn't on the server is reported as `MISSING`. **Without file names**, it fetches the list, prints it, and downloads everything.
+
+Each file ends with one of these results:
+
+| Result    | Meaning |
+|-----------|---------|
+| `OK`      | Downloaded. |
+| `MISSING` | The server doesn't have a file with that name. |
+| `TIMEOUT` | The server didn't respond, or stopped sending data, for `--timeout` seconds. |
+| `FAIL`    | Any other error, such as a dropped connection. |
+
+A file that doesn't finish downloading is never left behind half-written.
 
 Examples:
 
@@ -87,9 +101,12 @@ dotnet run --project Client -f net8.0 -- --server http://192.168.1.20:8080
 
 # Download only dummy.xml into a folder on the Desktop
 dotnet run --project Client -f net8.0 -- --output ~/Desktop/files dummy.xml
+
+# Give up on a server that doesn't answer within 5 seconds
+dotnet run --project Client -f net8.0 -- --timeout 5
 ```
 
-The client exits with code `1` if a download fails, a requested file isn't on the server, an XML file can't be read, or the server can't be reached.
+The client exits with code `1` if any file isn't `OK`, an XML file can't be read, or the server can't be reached, times out, or sends a file list that isn't valid JSON.
 
 ## Running on .NET Framework 4.8
 
