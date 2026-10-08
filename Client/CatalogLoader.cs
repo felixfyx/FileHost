@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Net;
 using System.Threading;
@@ -6,46 +7,116 @@ using System.Xml.Serialization;
 
 namespace FileHostClient
 {
-    // Downloads the catalog XML in the background as soon as it's created, saves a copy, and deserializes it.
+    // Downloads the catalog XML on a background thread as soon as it's created, then downloads it again every
+    // few minutes. Each download saves a copy and deserializes it.
     //
-    //   CatalogLoader loader = new CatalogLoader(url, outputPath, 30);  // returns immediately
-    //   ...
-    //   if (loader.IsReady) { ... }                                     // check without waiting
-    //   Catalog catalog = await loader.GetCatalogAsync();               // wait only if not ready yet
+    //   using (CatalogLoader loader = new CatalogLoader(url, outputPath, 30, 5))  // returns immediately
+    //   {
+    //       ...
+    //       if (loader.IsReady) { ... }                // check without waiting
+    //       Catalog catalog = loader.GetCatalog();     // waits only until the first download is done
+    //   }
     //
-    // If the download fails, GetCatalogAsync throws: WebException (download), IOException (saving the file)
-    // or InvalidOperationException (bad XML). Make sure something awaits it, or the error goes unnoticed.
-    public class CatalogLoader
+    // Until a download has succeeded, GetCatalog throws what went wrong: WebException (download), IOException
+    // (saving the file) or InvalidOperationException (bad XML). After that, a failed refresh keeps the previous
+    // catalog and is reported through LastRefreshError instead.
+    public class CatalogLoader : IDisposable
     {
         // If the server says the file is being updated (503), wait this long and try again, up to this many times.
         private const int RetryDelaySeconds = 2;
         private const int MaxAttempts = 5;
 
-        private readonly Task<Catalog> _download;
+        private readonly string _url;
+        private readonly string _outputPath;
+        private readonly int _timeoutSeconds;
+        private readonly TimeSpan _refreshInterval;
 
-        public CatalogLoader(string url, string outputPath, int timeoutSeconds)
+        // Completes when the first download finishes, so GetCatalog has something to wait on until then.
+        private readonly TaskCompletionSource<Catalog> _firstDownload = new TaskCompletionSource<Catalog>();
+
+        // The newest result: a finished task holding the latest good catalog or, if none has loaded yet, the error.
+        // Swapped in whole by the background thread, so readers always see one complete result.
+        private volatile Task<Catalog> _latest;
+        private volatile Exception _lastRefreshError;
+
+        // Set by Dispose to wake the background thread and stop it. Never disposed itself, because the
+        // background thread may still be waiting on it.
+        private readonly ManualResetEvent _stop = new ManualResetEvent(false);
+
+        public CatalogLoader(string url, string outputPath, int timeoutSeconds, int refreshMinutes)
         {
-            // Start in the background and return immediately (a constructor can't await).
+            _url = url;
+            _outputPath = outputPath;
+            _timeoutSeconds = timeoutSeconds;
+            _refreshInterval = TimeSpan.FromMinutes(refreshMinutes);
+            _latest = _firstDownload.Task;
+
+            // One thread does every download, one after another, so two downloads never overlap or write the
+            // same file at once. A background thread doesn't keep the program running after Main returns.
             //
-            // Task.Run around the normal (blocking) download is used instead of HttpWebRequest's async
-            // methods because Timeout and ReadWriteTimeout only work for the blocking calls.
-            _download = Task.Run(() => DownloadAndRead(url, outputPath, timeoutSeconds));
+            // The normal (blocking) download is used instead of HttpWebRequest's async methods because Timeout
+            // and ReadWriteTimeout only work for the blocking calls.
+            Thread thread = new Thread(RefreshLoop) { IsBackground = true, Name = "Catalog refresh" };
+            thread.Start();
         }
 
-        // True once the catalog has downloaded and loaded successfully.
+        // True once a catalog has downloaded and loaded successfully.
         public bool IsReady
         {
-            get { return _download.Status == TaskStatus.RanToCompletion; }
+            get { return _latest.Status == TaskStatus.RanToCompletion; }
         }
 
-        // Await this wherever the data is needed. It waits only if the catalog isn't ready yet,
-        // and throws if the download failed. Awaiting it again later returns the same catalog.
-        public Task<Catalog> GetCatalogAsync()
+        // What went wrong with the most recent download, or null if it succeeded.
+        public Exception LastRefreshError
         {
-            return _download;
+            get { return _lastRefreshError; }
         }
 
-        // Runs in the background: download, then deserialize.
+        // Returns the latest catalog. Waits only if the first download hasn't finished yet, and throws if no
+        // download has succeeded so far. Each refresh produces a new Catalog object, so one already returned
+        // never changes underneath the caller.
+        public Catalog GetCatalog()
+        {
+            // GetAwaiter().GetResult() throws the original exception, where .Result would wrap it in an
+            // AggregateException.
+            return _latest.GetAwaiter().GetResult();
+        }
+
+        // Stops the refreshes. A download already in progress finishes first.
+        public void Dispose()
+        {
+            _stop.Set();
+        }
+
+        // Runs on the background thread: download now, then again every refresh interval until stopped.
+        private void RefreshLoop()
+        {
+            do
+            {
+                try
+                {
+                    Catalog catalog = DownloadAndRead(_url, _outputPath, _timeoutSeconds);
+                    _lastRefreshError = null;
+                    _latest = Task.FromResult(catalog);
+                    _firstDownload.TrySetResult(catalog);
+                }
+                catch (Exception ex)
+                {
+                    // Catch everything: an exception escaping this thread would end the whole program.
+                    _lastRefreshError = ex;
+                    if (!IsReady)
+                    {
+                        // Nothing good loaded yet, so pass the error on to GetCatalog.
+                        TaskCompletionSource<Catalog> failed = new TaskCompletionSource<Catalog>();
+                        failed.SetException(ex);
+                        _latest = failed.Task;
+                        _firstDownload.TrySetException(ex);
+                    }
+                }
+            }
+            while (!_stop.WaitOne(_refreshInterval));
+        }
+
         private static Catalog DownloadAndRead(string url, string outputPath, int timeoutSeconds)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)));

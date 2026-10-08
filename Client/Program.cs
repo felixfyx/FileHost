@@ -2,12 +2,10 @@ using System;
 using System.Configuration;
 using System.IO;
 using System.Net;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace FileHostClient
 {
-    // Demo of CatalogLoader: starts the download, does other work meanwhile, then uses the catalog.
+    // Demo of CatalogLoader: starts the background downloads, then prints the current catalog whenever asked.
     // Settings are in App.config.
     internal static class Program
     {
@@ -16,47 +14,53 @@ namespace FileHostClient
             string url = ConfigurationManager.AppSettings["Url"];
             string outputPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ConfigurationManager.AppSettings["OutputPath"]);
             int timeoutSeconds = int.Parse(ConfigurationManager.AppSettings["TimeoutSeconds"]);
+            int refreshMinutes = int.Parse(ConfigurationManager.AppSettings["RefreshMinutes"]);
 
-            // Starts downloading in the background; the constructor returns immediately.
-            CatalogLoader loader = new CatalogLoader(url, outputPath, timeoutSeconds);
-            Console.WriteLine("Download started. Ready yet? " + loader.IsReady);
-
-            // The program is free to do other work meanwhile. Here it just shows progress dots.
-            Task<Catalog> catalogTask = loader.GetCatalogAsync();
-            Console.Write("Downloading " + url);
-            while (!catalogTask.IsCompleted)
+            // Starts downloading on a background thread; the constructor returns immediately.
+            using (CatalogLoader loader = new CatalogLoader(url, outputPath, timeoutSeconds, refreshMinutes))
             {
-                Console.Write(".");
-                Thread.Sleep(500);
-            }
-            Console.WriteLine();
+                Console.WriteLine("Downloading " + url + " now and every " + refreshMinutes + " minute(s). Ready yet? " + loader.IsReady);
 
+                // The program is free to do other work meanwhile. Here it just prints the catalog when asked.
+                // Only the first print can wait, and only until the first download is done.
+                PrintCurrent(loader, outputPath);
+                Console.WriteLine();
+                Console.WriteLine("Press Enter to print the current catalog again, or type q and press Enter to quit.");
+                string line;
+                while ((line = Console.ReadLine()) != null && line.Trim() != "q")
+                {
+                    PrintCurrent(loader, outputPath);
+                }
+            }
+            return 0;
+        }
+
+        private static void PrintCurrent(CatalogLoader loader, string outputPath)
+        {
             try
             {
-                // Gives the catalog, or throws whatever went wrong in the background.
-                // GetAwaiter().GetResult() throws the original exception (like await does), so the catch
-                // blocks below match it. .Result would wrap it in an AggregateException instead.
-                Catalog catalog = catalogTask.GetAwaiter().GetResult();
-                Console.WriteLine("Ready? " + loader.IsReady + ". Saved " + new FileInfo(outputPath).Length + " bytes to " + outputPath);
+                // Gives the latest catalog, or throws what went wrong if no download has succeeded yet.
+                Catalog catalog = loader.GetCatalog();
+                Console.WriteLine("Saved " + new FileInfo(outputPath).Length + " bytes to " + outputPath);
+                if (loader.LastRefreshError != null)
+                {
+                    Console.WriteLine("Latest refresh failed, showing the previous catalog: " + loader.LastRefreshError.GetBaseException().Message);
+                }
                 Print(catalog);
-                return 0;
             }
             catch (WebException ex)
             {
                 // Server not reachable, timed out, busy for too long, or answered with an error such as 404.
                 Console.WriteLine("Download failed: " + ex.Message);
-                return 1;
             }
             catch (IOException ex)
             {
                 Console.WriteLine("Could not save the file: " + ex.Message);
-                return 1;
             }
             catch (InvalidOperationException ex)
             {
                 // XmlSerializer reports bad XML this way; the inner exception says what was wrong.
                 Console.WriteLine("Could not read the XML: " + ex.GetBaseException().Message);
-                return 1;
             }
         }
 
