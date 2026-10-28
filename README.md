@@ -143,7 +143,32 @@ If a refresh fails after a catalog has loaded, the client prints `Latest refresh
 | `Download failed: The remote server returned an error: (503) Server Unavailable.` | The server's file was unavailable (being replaced, written to, or deleted) for all 5 attempts. |
 | `Could not save the file: ...` | The output file couldn't be replaced, for example because another program has it open without allowing it to be replaced. |
 | `Download failed: Download incomplete: received X of Y bytes.` | The connection dropped partway through. The previously saved file, if any, is left as it was. |
+| `Download failed: ... Could not establish trust relationship for the SSL/TLS secure channel.` | The HTTPS server's certificate was refused. The lines under it say why (see below). |
 | `Could not read the XML: ...` | The file isn't valid XML, or doesn't match the classes in `Catalog.cs`. |
+
+Under the message, a `Status:` line gives the kind of network failure (`ConnectFailure`, `Timeout`, `TrustFailure`, `ProtocolError` and so on), and each `Because:` line gives an inner error. These often name the exact cause, such as the address and port that refused the connection.
+
+When an HTTPS certificate is refused, the client also prints the reason and the certificate's details:
+
+```
+Download failed: The underlying connection was closed: Could not establish trust relationship for the SSL/TLS secure channel.
+  Certificate refused for fileserver: RemoteCertificateNameMismatch, RemoteCertificateChainErrors
+  UntrustedRoot: A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider.
+  Certificate: CN=fileserver.company.local, issued by CN=Company CA, valid 2026-10-01 to 2027-10-01
+  Names on it: DNS Name=fileserver.company.local
+  Thumbprint: 3F684ADDB9BA5FAD044602195C589551AB6A6B88
+  Status: TrustFailure
+  Because: The remote certificate is invalid according to the validation procedure.
+```
+
+| Line | Fix |
+|------|-----|
+| `RemoteCertificateNameMismatch` | Change the host in `Url` to one of the names on the certificate. An IP address or short name doesn't match a full name. |
+| `UntrustedRoot` | Import the issuing CA's certificate into Local Computer → Trusted Root Certification Authorities on the client computer. |
+| `PartialChain` | An intermediate certificate is missing. Install it on the server so the server sends it, or import it on the client under Intermediate Certification Authorities. |
+| `NotTimeValid` | The certificate has expired, or the client computer's clock is wrong. |
+
+Checking the certificate this way doesn't change which certificates are accepted. That's still decided by Windows, or by a `ServicePointManager.ServerCertificateValidationCallback` if your program sets one. Mono on macOS and Linux doesn't fill in the chain lines such as `UntrustedRoot`.
 
 If you change the structure of the XML, update `Catalog.cs` to match.
 

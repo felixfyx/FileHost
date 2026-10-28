@@ -66,6 +66,9 @@ client needs **no code change**: `HttpWebRequest` trusts whatever the Windows st
   the certificate and the network path work from wherever they ran it.
 - On the Mac, against a self-signed HTTPS server, the client failed with `TrustFailure` as expected. Mono's TLS
   differs from Windows', so this says nothing about the customer's machine.
+- The client now prints the cause of a failure (2026-10-29). Under `Download failed:` come `Status:` and `Because:`
+  lines and, for a refused certificate, the policy errors, chain status, names, issuer, dates and thumbprint. The
+  customer needs this build. Their output should settle the question.
 
 **Still unknown** (the client's own error line usually settles it):
 - the exact line the client prints after `Download failed:`
@@ -103,10 +106,10 @@ To see why a particular certificate is refused, connect with `SslStream` and a c
 `UntrustedRoot` means the CA isn't in `LocalMachine\Root`, `PartialChain` means an intermediate is missing, and
 `NotTimeValid` means the certificate has expired or the clock is wrong.
 
-**Next steps the user is considering (none started):**
-1. Print more detail on download failures in the client: `WebException.Status`, the inner exception, and the
-   certificate's `SslPolicyErrors` and chain status, logged by a validation callback that doesn't change what's
-   accepted.
+**Next steps the user is considering:**
+1. Done: detailed failure output (`CatalogLoader.GetResponse` / `DescribeCertificateProblem`, `Program.Describe`).
+   The validation callback defers to `ServicePointManager.ServerCertificateValidationCallback` when one is set, so
+   it accepts exactly what .NET would. On Mono, `chain.ChainStatus` comes back empty; Windows fills it.
 2. Reproduce on Windows: create a test CA and a server certificate with `openssl`, serve `dummy.xml` over HTTPS (for
    example with Python `http.server` wrapped in `ssl`), and run the client before and after importing the CA into
    `Cert:\LocalMachine\Root`. Then try another account and a URL with an IP address.

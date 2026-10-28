@@ -44,24 +44,42 @@ namespace FileHostClient
                 Console.WriteLine("Saved " + new FileInfo(outputPath).Length + " bytes to " + outputPath);
                 if (loader.LastRefreshError != null)
                 {
-                    Console.WriteLine("Latest refresh failed, showing the previous catalog: " + loader.LastRefreshError.GetBaseException().Message);
+                    Console.WriteLine("Latest refresh failed, showing the previous catalog: " + Describe(loader.LastRefreshError));
                 }
                 Print(catalog);
             }
             catch (WebException ex)
             {
-                // Server not reachable, timed out, busy for too long, or answered with an error such as 404.
-                Console.WriteLine("Download failed: " + ex.Message);
+                // Server not reachable, timed out, busy for too long, certificate refused, or answered with an
+                // error such as 404.
+                Console.WriteLine("Download failed: " + Describe(ex));
             }
             catch (IOException ex)
             {
-                Console.WriteLine("Could not save the file: " + ex.Message);
+                Console.WriteLine("Could not save the file: " + Describe(ex));
             }
             catch (InvalidOperationException ex)
             {
                 // XmlSerializer reports bad XML this way; the inner exception says what was wrong.
-                Console.WriteLine("Could not read the XML: " + ex.GetBaseException().Message);
+                Console.WriteLine("Could not read the XML: " + Describe(ex));
             }
+        }
+
+        // The error's message, the kind of network failure for a download error, and the message of each error
+        // inside it. The inner ones often say exactly what went wrong, such as which address refused the connection.
+        private static string Describe(Exception ex)
+        {
+            string text = ex.Message;
+            WebException webEx = ex as WebException;
+            if (webEx != null)
+            {
+                text += Environment.NewLine + "  Status: " + webEx.Status;
+            }
+            for (Exception inner = ex.InnerException; inner != null; inner = inner.InnerException)
+            {
+                text += Environment.NewLine + "  Because: " + inner.Message;
+            }
+            return text;
         }
 
         private static void Print(Catalog catalog)

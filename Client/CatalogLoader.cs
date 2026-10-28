@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Serialization;
@@ -151,7 +153,7 @@ namespace FileHostClient
             // Download to a temporary file first, so a failed download never leaves a half-written file
             // under the real name. A .tmp left by a failed run is simply overwritten next time.
             string tempPath = outputPath + ".tmp";
-            using (WebResponse response = request.GetResponse())
+            using (WebResponse response = GetResponse(request))
             using (Stream body = response.GetResponseStream())
             using (FileStream file = File.Create(tempPath))
             {
@@ -175,6 +177,72 @@ namespace FileHostClient
             {
                 File.Move(tempPath, outputPath);
             }
+        }
+
+        // The same as request.GetResponse(), except that when an HTTPS server's certificate is refused, the error
+        // says why. On its own .NET only reports "Could not establish trust relationship", whatever the reason.
+        private static WebResponse GetResponse(HttpWebRequest request)
+        {
+            string certificateProblem = null;
+            request.ServerCertificateValidationCallback = (sender, certificate, chain, errors) =>
+            {
+                // Accept exactly what would be accepted without this callback: whatever a program-wide callback
+                // decides if one is set, otherwise only a certificate .NET found no problems with.
+                RemoteCertificateValidationCallback programWide = ServicePointManager.ServerCertificateValidationCallback;
+                bool accepted = programWide != null
+                    ? programWide(sender, certificate, chain, errors)
+                    : errors == SslPolicyErrors.None;
+                if (!accepted)
+                {
+                    certificateProblem = DescribeCertificateProblem(request.Address.Host, certificate, chain, errors);
+                }
+                return accepted;
+            };
+
+            try
+            {
+                return request.GetResponse();
+            }
+            catch (WebException ex) when (certificateProblem != null)
+            {
+                throw new WebException(ex.Message + certificateProblem, ex.InnerException, ex.Status, ex.Response);
+            }
+        }
+
+        // For example:
+        //   Certificate refused for fileserver: RemoteCertificateNameMismatch, RemoteCertificateChainErrors
+        //   UntrustedRoot: A certificate chain processed, but terminated in a root certificate which is not trusted...
+        //   Certificate: CN=fileserver.company.local, issued by CN=Company CA, valid 2026-10-01 to 2027-10-01
+        //   Names on it: DNS Name=fileserver.company.local
+        //   Thumbprint: 3F684ADDB9BA5FAD044602195C589551AB6A6B88
+        private static string DescribeCertificateProblem(string host, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
+        {
+            string nl = Environment.NewLine + "  ";
+            string text = nl + "Certificate refused for " + host + ": " + errors;
+            if (chain != null)
+            {
+                // UntrustedRoot: the issuing CA isn't trusted on this computer for this account.
+                // PartialChain: an intermediate certificate is missing. NotTimeValid: expired, or the clock is wrong.
+                foreach (X509ChainStatus status in chain.ChainStatus)
+                {
+                    text += nl + status.Status + ": " + status.StatusInformation.Trim();
+                }
+            }
+            if (certificate != null)
+            {
+                X509Certificate2 cert = new X509Certificate2(certificate);
+                text += nl + "Certificate: " + cert.Subject + ", issued by " + cert.Issuer
+                    + ", valid " + cert.NotBefore.ToString("yyyy-MM-dd") + " to " + cert.NotAfter.ToString("yyyy-MM-dd");
+
+                // The host in the URL must be one of these, or the error includes RemoteCertificateNameMismatch.
+                X509Extension names = cert.Extensions["2.5.29.17"];
+                if (names != null)
+                {
+                    text += nl + "Names on it: " + names.Format(false);
+                }
+                text += nl + "Thumbprint: " + cert.Thumbprint;
+            }
+            return text;
         }
 
         private static Catalog Deserialize(string path)
